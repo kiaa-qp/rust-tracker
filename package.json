@@ -1,0 +1,16 @@
+{
+  "name": "rust-tracker",
+  "version": "1.0.0",
+  "description": "Lightweight Rust server player tracker",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "gamedig": "^3.2.1",
+    "node-cron": "^3.0.3",
+    "pg": "^8.11.5",
+    "dotenv": "^16.4.5"
+  }
+}

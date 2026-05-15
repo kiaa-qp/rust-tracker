@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSVBOSS — Rust Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #080808;
+      --surface: #0f0f0f;
+      --card:    #111111;
+      --border:  #1a1a1a;
+      --border2: #222222;
+      --text:    #d4d4d4;
+      --muted:   #3a3a3a;
+      --faint:   #1e1e1e;
+      --green:   #16a34a;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    #app { position: relative; z-index: 1; }
+
+    /* ── HEADER ─────────────────────────────────────────────── */
+    #header {
+      background: rgba(8,8,8,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 32px;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    #header-left { display: flex; align-items: center; gap: 14px; }
+    #logo-mark {
+      width: 30px; height: 30px;
+      background: #fff;
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 800; color: #000; letter-spacing: -0.5px;
+    }
+    #logo-text { font-size: 13px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
+    #header-sep { width: 1px; height: 18px; background: var(--border2); }
+    #server-label { font-size: 13px; font-weight: 500; color: #555; }
+
+    #header-right { display: flex; align-items: center; gap: 8px; }
+    .header-pill {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 11px;
+      font-size: 11.5px; color: #444; font-family: 'DM Mono', monospace;
+    }
+    .h-dot { width: 6px; height: 6px; border-radius: 50%; background: #1e1e1e; flex-shrink: 0; }
+    .h-dot.live { background: var(--green); box-shadow: 0 0 5px #16a34a88; }
+
+    /* ── MAIN ───────────────────────────────────────────────── */
+    #main { max-width: 1160px; margin: 0 auto; padding: 32px 24px; }
+
+    /* ── STAT CARDS ─────────────────────────────────────────── */
+    #stat-cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    @media (max-width: 900px) { #stat-cards { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 500px) { #stat-cards { grid-template-columns: 1fr; } }
+
+    .stat-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px;
+      display: flex; flex-direction: column; gap: 6px;
+      transition: border-color 0.15s;
+    }
+    .stat-card:hover { border-color: var(--border2); }
+    .sc-label { font-size: 10.5px; font-weight: 600; color: #2a2a2a; text-transform: uppercase; letter-spacing: 0.8px; }
+    .sc-value { font-size: 26px; font-weight: 600; color: #fff; font-family: 'DM Mono', monospace; letter-spacing: -0.5px; line-height: 1.1; }
+    .sc-value.sm { font-size: 16px; margin-top: 4px; }
+    .sc-sub   { font-size: 11.5px; color: #2e2e2e; margin-top: 2px; }
+
+    /* ── TABS ───────────────────────────────────────────────── */
+    #tabs {
+      display: flex; gap: 2px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 9px; padding: 3px; width: fit-content;
+      margin-bottom: 22px;
+    }
+    .tab-btn {
+      background: none; border: none; color: #383838;
+      font-family: 'DM Sans', sans-serif; font-size: 12.5px; font-weight: 600;
+      padding: 7px 18px; cursor: pointer; border-radius: 7px; transition: all 0.15s;
+    }
+    .tab-btn:hover { color: #777; }
+    .tab-btn.active { background: #1c1c1c; color: #fff; }
+
+    /* ── FILTERS ────────────────────────────────────────────── */
+    #filters {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 18px; flex-wrap: wrap;
+    }
+    .filter-label { font-size: 10.5px; font-weight: 600; color: #2a2a2a; text-transform: uppercase; letter-spacing: 0.7px; }
+    .filter-group { display: flex; align-items: center; gap: 7px; }
+    .filter-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+
+    select {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 7px; color: #777;
+      font-family: 'DM Sans', sans-serif; font-size: 12.5px; font-weight: 500;
+      padding: 7px 28px 7px 11px; cursor: pointer; outline: none; transition: all 0.15s;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23333' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 9px center;
+    }
+    select:hover { border-color: var(--border2); color: #aaa; }
+    select option { background: #111; }
+
+    .icon-btn {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 7px; color: #383838;
+      font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
+      padding: 7px 13px; cursor: pointer; transition: all 0.15s; margin-left: auto;
+    }
+    .icon-btn:hover { border-color: var(--border2); color: #888; }
+
+    /* ── TABLE ──────────────────────────────────────────────── */
+    .table-wrap { border-radius: 12px; border: 1px solid var(--border); overflow: hidden; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #0b0b0b; border-bottom: 1px solid var(--border); }
+    thead th {
+      padding: 11px 16px; text-align: left;
+      font-size: 10px; font-weight: 600; color: #252525;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid #0d0d0d; transition: background 0.1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #0d0d0d; }
+    td { padding: 13px 16px; vertical-align: middle; white-space: nowrap; }
+
+    .td-rank { font-size: 12px; font-weight: 700; color: #1e1e1e; width: 44px; font-family: 'DM Mono', monospace; }
+    .td-rank.r1 { color: #b8860b; }
+    .td-rank.r2 { color: #888; }
+    .td-rank.r3 { color: #7a4f28; }
+
+    .td-player { min-width: 180px; }
+    .player-name { font-size: 13px; font-weight: 600; color: #bbb; }
+    .player-name.is-online::after {
+      content: '●';
+      color: var(--green);
+      margin-left: 7px;
+      font-size: 8px;
+      vertical-align: middle;
+    }
+
+    .td-mono { font-family: 'DM Mono', monospace; font-size: 12.5px; color: #2e2e2e; }
+    .td-mono.has-val { color: #484848; }
+
+    .bar-wrap { display: flex; flex-direction: column; gap: 4px; }
+    .bar-num  { line-height: 1; }
+    .mini-bar-bg   { height: 2px; background: #141414; border-radius: 1px; overflow: hidden; width: 54px; }
+    .mini-bar-fill { height: 100%; background: #333; border-radius: 1px; transition: width 0.5s ease; }
+
+    /* ── ONLINE TAB ─────────────────────────────────────────── */
+    #tab-online { display: none; }
+    .ol-section-title {
+      font-size: 10.5px; font-weight: 600; color: #252525;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin-bottom: 10px;
+    }
+    .ol-section-title + .ol-section-title { margin-top: 22px; }
+    .ol-list { border-radius: 12px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 4px; }
+    .ol-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; border-bottom: 1px solid #0d0d0d; transition: background 0.1s;
+    }
+    .ol-row:last-child { border-bottom: none; }
+    .ol-row:hover { background: #0d0d0d; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.on  { background: var(--green); box-shadow: 0 0 6px #16a34a77; }
+    .status-dot.off { background: #1a1a1a; }
+    .ol-name  { font-size: 13px; font-weight: 600; color: #bbb; }
+    .ol-meta  { font-size: 11px; color: #252525; font-family: 'DM Mono', monospace; margin-top: 1px; }
+    .ol-badge {
+      margin-left: auto; font-size: 11px; font-family: 'DM Mono', monospace;
+      color: #1f5c2e; background: #0b1a0f; border: 1px solid #163320;
+      border-radius: 5px; padding: 3px 9px;
+    }
+
+    /* ── GRAPH TAB ──────────────────────────────────────────── */
+    #tab-graph { display: none; }
+    #graph-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 20px 16px;
+    }
+    #graph-title { font-size: 10.5px; font-weight: 600; color: #252525; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 16px; }
+    canvas#graph { width: 100%; height: 120px; display: block; }
+
+    /* ── SHARED ─────────────────────────────────────────────── */
+    .empty-state { text-align: center; padding: 56px 24px; color: #1e1e1e; font-size: 13px; }
+    .cache-note  { text-align: right; font-size: 10px; color: #1a1a1a; font-family: 'DM Mono', monospace; margin-top: 10px; }
+
+    /* ── SKELETON ───────────────────────────────────────────── */
+    @keyframes shimmer {
+      0%   { background-position: -400px 0; }
+      100% { background-position:  400px 0; }
+    }
+    .skeleton {
+      background: linear-gradient(90deg, #111 25%, #161616 50%, #111 75%);
+      background-size: 400px 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 4px;
+    }
+    .sk-name { width: 110px; height: 13px; display: inline-block; }
+    .sk-num  { width:  44px; height: 12px; display: inline-block; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <div id="header">
+    <div id="header-left">
+      <div id="logo-mark">RT</div>
+      <span id="logo-text">CSVBOSS</span>
+      <div id="header-sep"></div>
+      <span id="server-label">eu-monthly.vitalrust.com</span>
+    </div>
+    <div id="header-right">
+      <div class="header-pill"><div class="h-dot" id="online-dot"></div><span id="pill-online">— online</span></div>
+      <div class="header-pill" id="pill-map" style="display:none"><span id="pill-map-text">—</span></div>
+    </div>
+  </div>
+
+  <div id="main">
+
+    <!-- STAT CARDS -->
+    <div id="stat-cards">
+      <div class="stat-card">
+        <div class="sc-label">Online Now</div>
+        <div class="sc-value" id="sc-online">—</div>
+        <div class="sc-sub" id="sc-online-sub">waiting for poll…</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-label">Top Player</div>
+        <div class="sc-value sm" id="sc-top">—</div>
+        <div class="sc-sub" id="sc-top-sub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-label">Sessions This Wipe</div>
+        <div class="sc-value" id="sc-sessions">—</div>
+        <div class="sc-sub" id="sc-sessions-sub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-label">Wipe Started</div>
+        <div class="sc-value sm" id="sc-wipe">—</div>
+        <div class="sc-sub" id="sc-wipe-sub">current wipe</div>
+      </div>
+    </div>
+
+    <!-- TABS -->
+    <div id="tabs">
+      <button class="tab-btn active" data-tab="leaderboard">Leaderboard</button>
+      <button class="tab-btn" data-tab="online">Online Now</button>
+      <button class="tab-btn" data-tab="graph">Activity</button>
+    </div>
+
+    <!-- LEADERBOARD TAB -->
+    <div id="tab-leaderboard">
+      <div id="filters">
+        <div class="filter-group">
+          <span class="filter-label">Wipe</span>
+          <select id="wipe-select"><option value="">Current</option></select>
+        </div>
+        <button class="icon-btn" id="btn-refresh">↻ Refresh</button>
+      </div>
+      <div id="lb-content"></div>
+    </div>
+
+    <!-- ONLINE TAB -->
+    <div id="tab-online">
+      <div id="filters" style="margin-bottom:20px">
+        <button class="icon-btn" id="btn-refresh-online" style="margin-left:0">↻ Refresh</button>
+      </div>
+      <div id="online-content"></div>
+    </div>
+
+    <!-- GRAPH TAB -->
+    <div id="tab-graph">
+      <div id="graph-card">
+        <div id="graph-title">Player count — last 4 hours</div>
+        <canvas id="graph"></canvas>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ── Utilities ──────────────────────────────────────────────────────────────
+
+  function fmtTime(secs) {
+    if (!secs || secs <= 0) return '0m';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+    if (h > 0)   return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  function fmtDate(ts) {
+    if (!ts) return '—';
+    const diff = Date.now() - ts;
+    if (diff < 60_000)    return 'just now';
+    if (diff < 3600_000)  return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function fmtDateFull(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────────
+
+  let selectedWipeId = '';
+  let activePlayers  = [];
+
+  // ── Tab switching ──────────────────────────────────────────────────────────
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      document.getElementById('tab-leaderboard').style.display = tab === 'leaderboard' ? '' : 'none';
+      document.getElementById('tab-online').style.display      = tab === 'online'      ? '' : 'none';
+      document.getElementById('tab-graph').style.display       = tab === 'graph'       ? '' : 'none';
+      if (tab === 'online') loadOnline();
+      if (tab === 'graph')  loadGraph();
+    });
+  });
+
+  // ── Status / header ────────────────────────────────────────────────────────
+
+  async function loadStatus() {
+    const s = await fetch('/api/status').then(r => r.json()).catch(() => null);
+    if (!s) return;
+
+    const dot = document.getElementById('online-dot');
+    dot.className = s.online ? 'h-dot live' : 'h-dot';
+    document.getElementById('pill-online').textContent = s.online
+      ? `${s.playerCount} / ${s.maxPlayers} online`
+      : 'offline';
+
+    if (s.mapName) {
+      document.getElementById('pill-map').style.display = 'flex';
+      document.getElementById('pill-map-text').textContent = s.mapName;
+    }
+
+    document.getElementById('sc-online').textContent = s.online ? s.playerCount : '—';
+    document.getElementById('sc-online-sub').textContent = s.online
+      ? `of ${s.maxPlayers} max`
+      : 'server offline';
+
+    if (s.currentWipe) {
+      document.getElementById('sc-wipe').textContent = fmtDateFull(s.currentWipe.started_at);
+    }
+    if (s.lastPollAt) {
+      document.getElementById('sc-wipe-sub').textContent = `last poll ${fmtDate(s.lastPollAt)}`;
+    }
+
+    activePlayers = s.activePlayers || [];
+  }
+
+  // ── Wipe selector ──────────────────────────────────────────────────────────
+
+  async function loadWipes() {
+    const wipes = await fetch('/api/wipes').then(r => r.json()).catch(() => []);
+    const sel = document.getElementById('wipe-select');
+    sel.innerHTML = '<option value="">Current</option>';
+    wipes.forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = w.id;
+      const label = w.map_name || `Wipe #${w.id}`;
+      opt.textContent = `${label} — ${fmtDateFull(w.started_at)}`;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => {
+      selectedWipeId = sel.value;
+      renderSkeletons();
+      loadLeaderboard();
+    });
+  }
+
+  // ── Leaderboard ────────────────────────────────────────────────────────────
+
+  function renderSkeletons() {
+    let h = `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>#</th><th>Player</th><th>Time Played</th><th>Sessions</th><th>Last Seen</th>
+      </tr></thead><tbody>`;
+    for (let i = 0; i < 8; i++) {
+      h += `<tr>
+        <td><div class="skeleton sk-num"></div></td>
+        <td><div class="skeleton sk-name"></div></td>
+        <td><div class="skeleton sk-num"></div></td>
+        <td><div class="skeleton sk-num"></div></td>
+        <td><div class="skeleton sk-num"></div></td>
+      </tr>`;
+    }
+    h += `</tbody></table></div>`;
+    document.getElementById('lb-content').innerHTML = h;
+  }
+
+  async function loadLeaderboard() {
+    const url = '/api/players' + (selectedWipeId ? `?wipe_id=${selectedWipeId}` : '');
+    const rows = await fetch(url).then(r => r.json()).catch(() => []);
+
+    if (!rows.length) {
+      document.getElementById('lb-content').innerHTML =
+        `<div class="empty-state">No data yet — waiting for first poll to complete.</div>`;
+      document.getElementById('sc-top').textContent = '—';
+      document.getElementById('sc-top-sub').textContent = '';
+      document.getElementById('sc-sessions').textContent = '—';
+      return;
+    }
+
+    const top     = rows[0];
+    const maxSecs = top.total_seconds || 1;
+    const totalSessions = rows.reduce((sum, r) => sum + r.session_count, 0);
+
+    document.getElementById('sc-top').textContent     = top.player_name;
+    document.getElementById('sc-top-sub').textContent = fmtTime(top.total_seconds) + ' played';
+    document.getElementById('sc-sessions').textContent = totalSessions;
+    document.getElementById('sc-sessions-sub').textContent = `across ${rows.length} player(s)`;
+
+    let h = `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>#</th><th>Player</th><th>Time Played</th><th>Sessions</th><th>Last Seen</th>
+      </tr></thead><tbody>`;
+
+    rows.forEach((row, i) => {
+      const rank = i + 1;
+      const rc   = rank === 1 ? 'r1' : rank === 2 ? 'r2' : rank === 3 ? 'r3' : '';
+      const rl   = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
+      const pct  = Math.round((row.total_seconds / maxSecs) * 100);
+      const isOn = activePlayers.includes(row.player_name);
+
+      h += `<tr>
+        <td class="td-rank ${rc}">${rl}</td>
+        <td class="td-player">
+          <span class="player-name ${isOn ? 'is-online' : ''}">${esc(row.player_name)}</span>
+        </td>
+        <td class="td-mono has-val">
+          <div class="bar-wrap">
+            <span class="bar-num">${fmtTime(row.total_seconds)}</span>
+            <div class="mini-bar-bg"><div class="mini-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+        </td>
+        <td class="td-mono has-val">${row.session_count}</td>
+        <td class="td-mono">${fmtDate(row.last_seen)}</td>
+      </tr>`;
+    });
+
+    h += `</tbody></table></div>`;
+    h += `<div class="cache-note">auto-refreshes every 30s</div>`;
+    document.getElementById('lb-content').innerHTML = h;
+  }
+
+  // ── Online Now tab ─────────────────────────────────────────────────────────
+
+  async function loadOnline() {
+    const [status, sessions] = await Promise.all([
+      fetch('/api/status').then(r => r.json()).catch(() => ({})),
+      fetch('/api/sessions').then(r => r.json()).catch(() => []),
+    ]);
+
+    const online  = status.activePlayers || [];
+    const ongoing = sessions.filter(s => !s.left_at);
+    const el      = document.getElementById('online-content');
+
+    let h = `<div class="ol-section-title">Online — ${online.length}</div>`;
+
+    if (!online.length) {
+      h += `<div class="empty-state" style="padding:24px 0">Nobody online right now.</div>`;
+    } else {
+      h += `<div class="ol-list">`;
+      online.forEach(name => {
+        const sess  = ongoing.find(s => s.player_name === name);
+        const since = sess ? fmtDate(sess.joined_at) : '';
+        h += `<div class="ol-row">
+          <div class="status-dot on"></div>
+          <div>
+            <div class="ol-name">${esc(name)}</div>
+            ${since ? `<div class="ol-meta">joined ${since}</div>` : ''}
+          </div>
+          <div class="ol-badge">online</div>
+        </div>`;
+      });
+      h += `</div>`;
+    }
+
+    if (status.lastPollAt) {
+      h += `<div class="cache-note">polled ${fmtDate(status.lastPollAt)}</div>`;
+    }
+
+    el.innerHTML = h;
+  }
+
+  // ── Activity graph ─────────────────────────────────────────────────────────
+
+  async function loadGraph() {
+    const history = await fetch('/api/history').then(r => r.json()).catch(() => []);
+    if (!history.length) return;
+
+    const canvas = document.getElementById('graph');
+    const dpr    = window.devicePixelRatio || 1;
+    const rect   = canvas.getBoundingClientRect();
+    canvas.width  = rect.width  * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const W = rect.width;
+    const H = rect.height;
+
+    const cutoff = Date.now() - 4 * 3600_000;
+    const pts    = history.filter(p => p.polled_at >= cutoff).reverse();
+    if (pts.length < 2) return;
+
+    const maxY   = Math.max(...pts.map(p => p.player_count), 1);
+    const minT   = pts[0].polled_at;
+    const rangeT = Math.max(pts[pts.length - 1].polled_at - minT, 1);
+
+    const toX = t => ((t - minT) / rangeT) * W;
+    const toY = v => H - 4 - (v / maxY) * (H - 20);
+
+    // Grid
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth   = 1;
+    [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+      const y = H - 4 - f * (H - 20);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    });
+
+    // Fill
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, 'rgba(255,255,255,0.06)');
+    grad.addColorStop(1, 'rgba(255,255,255,0.01)');
+    ctx.beginPath();
+    ctx.moveTo(toX(pts[0].polled_at), H);
+    pts.forEach(p => ctx.lineTo(toX(p.polled_at), toY(p.player_count)));
+    ctx.lineTo(toX(pts[pts.length - 1].polled_at), H);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth   = 1.5;
+    ctx.lineJoin    = 'round';
+    pts.forEach((p, i) => {
+      const x = toX(p.polled_at), y = toY(p.player_count);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Labels
+    ctx.fillStyle = '#2a2a2a';
+    ctx.font = '10px DM Mono, monospace';
+    ctx.fillText(maxY, 4, 14);
+    ctx.fillText('0', 4, H - 4);
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+
+  async function refresh() {
+    await Promise.all([loadStatus(), loadLeaderboard()]);
+  }
+
+  renderSkeletons();
+  loadWipes();
+  refresh();
+  setInterval(refresh, 30_000);
+</script>
+</body>
+</html>
