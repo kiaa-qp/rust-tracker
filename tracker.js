@@ -1,5 +1,4 @@
-const cron    = require('node-cron');
-const GameDig = require('gamedig');
+const cron = require('node-cron');
 const {
   getCurrentWipe, transitionWipe,
   startSession, endSession, recordPoll,
@@ -19,6 +18,7 @@ let lastStatus = {
 };
 
 async function queryServer() {
+  const { GameDig } = await import('gamedig');
   return GameDig.query({ type: 'rust', host: HOST, port: PORT, requestRules: false });
 }
 
