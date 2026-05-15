@@ -18,8 +18,11 @@ let lastStatus = {
 };
 
 async function queryServer() {
-  const { GameDig } = await import('gamedig');
-  return GameDig.query({ type: 'rust', host: HOST, port: PORT, requestRules: false });
+  const gamedig = await import('gamedig');
+  const GameDig = gamedig.GameDig || gamedig.default?.GameDig || gamedig.default;
+  if (!GameDig) throw new Error('Could not load GameDig from gamedig package');
+  const query = GameDig.query ? GameDig.query.bind(GameDig) : GameDig;
+  return query({ type: 'rust', host: HOST, port: PORT, requestRules: false });
 }
 
 // ── Anonymous player matching ─────────────────────────────────────────────
