@@ -32,8 +32,12 @@ function bmGet(path) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
+        if (res.statusCode !== 200) {
+          console.error(`[BM] HTTP ${res.statusCode} for ${path} — ${data.slice(0, 200)}`);
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
         try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error(`JSON parse error: ${e.message}`)); }
+        catch (e) { reject(new Error(`JSON parse error: ${e.message} — body: ${data.slice(0, 200)}`)); }
       });
     });
     req.on('error', reject);
