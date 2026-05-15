@@ -76,6 +76,15 @@ async function poll() {
     return;
   }
 
+  try {
+    await processPoll(now, result);
+  } catch (err) {
+    console.error(`[tracker] Poll processing error: ${err.message}`);
+  }
+}
+
+async function processPoll(now, result) {
+
   const mapName    = result.map       || 'Procedural Map';
   const players    = result.players   || [];
   const maxPlayers = result.maxplayers || 200;
@@ -127,28 +136,23 @@ async function poll() {
     const { continuing, left, joined } = matchAnonymous(snapshot, players, elapsedSecs);
 
     for (const { pi, ni } of continuing) {
-      newSnapshot[ni] = { ...snapshot[pi], time: players[ni].time };
+      const p = players[ni];
+      if (!p) continue;
+      newSnapshot.push({ ...snapshot[pi], time: p.time });
     }
 
-    await Promise.all(left.map(async pi => {
+    for (const pi of left) {
       await endSession(snapshot[pi].sessionId, now);
-      console.log(`[tracker] - ${snapshot[pi].label} left (${snapshot[pi].time.toFixed(0)}s)`);
-    }));
+      console.log(`[tracker] - ${snapshot[pi].label} left`);
+    }
 
     for (const ni of joined) {
+      const p = players[ni];
+      if (!p) continue;
       const label     = `Raider #${++anonSeq}`;
       const sessionId = await startSession(currentWipe.id, label, now);
-      newSnapshot[ni] = { sessionId, label, time: players[ni].time };
-      console.log(`[tracker] + ${label} joined (${players[ni].time.toFixed(0)}s connected)`);
-    }
-
-    // Fill any gaps (sparse array safety)
-    for (let i = 0; i < players.length; i++) {
-      if (!newSnapshot[i]) {
-        const label     = `Raider #${++anonSeq}`;
-        const sessionId = await startSession(currentWipe.id, label, now);
-        newSnapshot[i]  = { sessionId, label, time: players[i].time };
-      }
+      newSnapshot.push({ sessionId, label, time: p.time });
+      console.log(`[tracker] + ${label} joined (${Math.floor(p.time)}s connected)`);
     }
   }
 
