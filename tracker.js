@@ -54,30 +54,24 @@ async function getServerInfo() {
   };
 }
 
-// Returns players currently on the server with their BM player ID + name
-async function getActiveSessions() {
-  const data = await bmGet(
-    `/servers/${SERVER_ID}/relationships/sessions?include=player&filter[status]=active&page[size]=100`
-  );
-
+// Returns all players currently online — paginates through all pages
+async function getActivePlayers() {
   const players = new Map();
+  let url = `/players?filter[servers]=${SERVER_ID}&filter[online]=true&page[size]=100`;
 
-  // Build player name lookup from included
-  const nameMap = new Map();
-  if (data.included) {
-    for (const inc of data.included) {
-      if (inc.type === 'player') {
-        nameMap.set(inc.id, inc.attributes.name);
-      }
+  while (url) {
+    const data = await bmGet(url);
+    for (const p of (data.data || [])) {
+      players.set(p.id, { name: p.attributes.name });
     }
-  }
-
-  for (const session of (data.data || [])) {
-    const playerId = session.relationships?.player?.data?.id;
-    if (!playerId) continue;
-    const name     = nameMap.get(playerId) || `Player_${playerId}`;
-    const joinedAt = new Date(session.attributes.start).getTime();
-    players.set(playerId, { name, joinedAt, sessionBmId: session.id });
+    // Follow next page if present
+    const next = data.links?.next;
+    if (next) {
+      // BM returns full URL in links.next — strip the hostname
+      url = next.replace('https://api.battlemetrics.com', '');
+    } else {
+      url = null;
+    }
   }
 
   return players;
@@ -109,10 +103,10 @@ async function poll() {
 }
 
 async function processPoll(now) {
-  // Get server info + active sessions in parallel
+  // Get server info + active players in parallel
   const [info, activePlayers] = await Promise.all([
     getServerInfo(),
-    getActiveSessions(),
+    getActivePlayers(),
   ]);
 
   lastStatus = {
@@ -153,9 +147,8 @@ async function processPoll(now) {
   // Players who joined (in activePlayers but not in snapshot)
   for (const [bmId, p] of activePlayers) {
     if (!snapshot.has(bmId)) {
-      // Use BM's join time so session is accurate even if we missed it
-      const sessionId = await startSession(currentWipe.id, p.name, p.joinedAt);
-      snapshot.set(bmId, { sessionId, name: p.name, joinedAt: p.joinedAt });
+      const sessionId = await startSession(currentWipe.id, p.name, now);
+      snapshot.set(bmId, { sessionId, name: p.name });
       console.log(`[tracker] + ${p.name} joined`);
     }
   }
