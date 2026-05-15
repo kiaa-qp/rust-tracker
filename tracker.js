@@ -26,7 +26,13 @@ function bmGet(path) {
       hostname: 'api.battlemetrics.com',
       path,
       method: 'GET',
-      headers: { Authorization: `Bearer ${BM_TOKEN}` },
+      headers: {
+        'Authorization': `Bearer ${BM_TOKEN}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Origin': 'https://www.battlemetrics.com',
+        'Referer': 'https://www.battlemetrics.com/',
+      },
     };
     const req = https.request(options, res => {
       let data = '';
