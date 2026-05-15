@@ -78,7 +78,7 @@ async function getLeaderboard(wipeId) {
     WHERE wipe_id = $2
     GROUP BY player_name
     ORDER BY total_seconds DESC
-    LIMIT 200
+    LIMIT 10000
   `, [now, wipeId]);
   return rows;
 }
