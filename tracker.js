@@ -1,171 +1,178 @@
-const cron = require('node-cron');
-const a2s  = require('./a2s');
+const cron  = require('node-cron');
+const https = require('https');
 const {
   getCurrentWipe, transitionWipe,
   startSession, endSession, recordPoll,
 } = require('./db');
 
-const HOST = 'eu-monthly.vitalrust.com';
-const PORT = 28015;
+const BM_TOKEN   = process.env.BM_TOKEN;
+const SERVER_ID  = '29566604'; // Vital Rust - EU Monthly
+const HOST       = 'eu-monthly.vitalrust.com';
+const PORT       = 28015;
 
-// Each entry: { sessionId, label, time }  (time = seconds connected at last poll)
-let snapshot = [];
+let snapshot    = new Map(); // bmPlayerId -> { sessionId, name, lastSeen }
 let currentWipe = null;
 let lastPollAt  = null;
-let anonSeq     = 0;
 
 let lastStatus = {
   online: false, playerCount: 0, maxPlayers: 0, mapName: null, lastPollAt: null,
 };
 
-async function queryServer() {
-  const result = await a2s.query(HOST, PORT);
+// ── HTTP helper ────────────────────────────────────────────────────────────
+
+function bmGet(path) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'api.battlemetrics.com',
+      path,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${BM_TOKEN}` },
+    };
+    const req = https.request(options, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error(`JSON parse error: ${e.message}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+    req.end();
+  });
+}
+
+// ── BattleMetrics queries ──────────────────────────────────────────────────
+
+async function getServerInfo() {
+  const data = await bmGet(`/servers/${SERVER_ID}`);
   return {
-    map:        result.map,
-    maxplayers: result.maxPlayers,
-    players:    result.players,
+    playerCount: data.data.attributes.players,
+    maxPlayers:  data.data.attributes.maxPlayers,
+    mapName:     data.data.attributes.details?.map || 'Procedural Map',
+    status:      data.data.attributes.status, // 'online' | 'offline'
   };
 }
 
-// ── Anonymous player matching ─────────────────────────────────────────────
-// When censorplayerlist is on, all names are blank. Each player's `time`
-// field (seconds connected) grows by ~elapsedSecs per poll, so we match
-// players across polls by finding the closest expected value.
+// Returns players currently on the server with their BM player ID + name
+async function getActiveSessions() {
+  const data = await bmGet(
+    `/servers/${SERVER_ID}/relationships/sessions?include=player&filter[status]=active&page[size]=100`
+  );
 
-function matchAnonymous(prev, next, elapsedSecs) {
-  const tolerance  = Math.max(90, elapsedSecs * 0.5);
-  const usedPrev   = new Set();
-  const usedNext   = new Set();
-  const pairs      = [];
-  const candidates = [];
+  const players = new Map();
 
-  for (let pi = 0; pi < prev.length; pi++) {
-    for (let ni = 0; ni < next.length; ni++) {
-      const diff = Math.abs(next[ni].time - (prev[pi].time + elapsedSecs));
-      if (diff <= tolerance) candidates.push({ pi, ni, diff });
-    }
-  }
-  candidates.sort((a, b) => a.diff - b.diff);
-
-  for (const { pi, ni } of candidates) {
-    if (!usedPrev.has(pi) && !usedNext.has(ni)) {
-      pairs.push({ pi, ni });
-      usedPrev.add(pi);
-      usedNext.add(ni);
+  // Build player name lookup from included
+  const nameMap = new Map();
+  if (data.included) {
+    for (const inc of data.included) {
+      if (inc.type === 'player') {
+        nameMap.set(inc.id, inc.attributes.name);
+      }
     }
   }
 
-  return {
-    continuing: pairs,
-    left:   prev.map((_, i) => i).filter(i => !usedPrev.has(i)),
-    joined: next.map((_, i) => i).filter(i => !usedNext.has(i)),
-  };
+  for (const session of (data.data || [])) {
+    const playerId = session.relationships?.player?.data?.id;
+    if (!playerId) continue;
+    const name     = nameMap.get(playerId) || `Player_${playerId}`;
+    const joinedAt = new Date(session.attributes.start).getTime();
+    players.set(playerId, { name, joinedAt, sessionBmId: session.id });
+  }
+
+  return players;
+}
+
+// ── Wipe detection via BM server details ──────────────────────────────────
+// BM exposes the last wipe date in server details for Rust servers
+
+async function getWipeStart() {
+  try {
+    const data = await bmGet(`/servers/${SERVER_ID}`);
+    const wipeStr = data.data.attributes.details?.rust_last_wipe;
+    if (wipeStr) return new Date(wipeStr).getTime();
+  } catch {}
+  return null;
 }
 
 // ── Core poll ─────────────────────────────────────────────────────────────
 
 async function poll() {
   const now = Date.now();
-  let result;
-
   try {
-    result = await queryServer();
+    await processPoll(now);
   } catch (err) {
-    console.error(`[tracker] Query failed: ${err.message}`);
+    console.error(`[tracker] Poll error: ${err.message}`);
     lastStatus = { ...lastStatus, online: false, lastPollAt: now };
-    return;
   }
-
-  try {
-    await processPoll(now, result);
-  } catch (err) {
-    console.error(`[tracker] Poll processing error: ${err.message}`);
-  }
+  lastPollAt = now;
 }
 
-async function processPoll(now, result) {
+async function processPoll(now) {
+  // Get server info + active sessions in parallel
+  const [info, activePlayers] = await Promise.all([
+    getServerInfo(),
+    getActiveSessions(),
+  ]);
 
-  const mapName    = result.map       || 'Procedural Map';
-  const players    = result.players   || [];
-  const maxPlayers = result.maxplayers || 200;
+  lastStatus = {
+    online:      info.status === 'online',
+    playerCount: info.playerCount,
+    maxPlayers:  info.maxPlayers,
+    mapName:     info.mapName,
+    lastPollAt:  now,
+  };
 
-  lastStatus = { online: true, playerCount: players.length, maxPlayers, mapName, lastPollAt: now };
+  await recordPoll(info.playerCount, info.maxPlayers, info.mapName);
 
-  await recordPoll(players.length, maxPlayers, mapName);
-
-  // ── Wipe detection ───────────────────────────────────────────────────────
+  // ── Wipe detection ─────────────────────────────────────────────────────
   if (!currentWipe) {
-    currentWipe = await getCurrentWipe(mapName);
-  } else if (currentWipe.map_name && currentWipe.map_name !== mapName) {
-    console.log(`[tracker] Wipe — map changed "${currentWipe.map_name}" → "${mapName}"`);
-    await Promise.all(snapshot.map(s => endSession(s.sessionId, now)));
-    snapshot = [];
-    currentWipe = await transitionWipe(currentWipe.id, mapName);
-  }
-
-  const elapsedSecs = lastPollAt ? (now - lastPollAt) / 1000 : 0;
-  const hasNames    = players.some(p => p.name && p.name.trim().length > 0);
-  const newSnapshot = [];
-
-  if (hasNames) {
-    // ── Named players ──────────────────────────────────────────────────────
-    const prevByName = new Map(snapshot.map(s => [s.label, s]));
-    const seen = new Set();
-
-    for (const p of players) {
-      const name = p.name.trim() || `unknown_${p.time.toFixed(0)}`;
-      seen.add(name);
-      if (prevByName.has(name)) {
-        newSnapshot.push({ ...prevByName.get(name), time: p.time });
-      } else {
-        const sessionId = await startSession(currentWipe.id, name, now);
-        newSnapshot.push({ sessionId, label: name, time: p.time });
-        console.log(`[tracker] + ${name} joined`);
-      }
-    }
-
-    for (const [name, s] of prevByName) {
-      if (!seen.has(name)) {
-        await endSession(s.sessionId, now);
-        console.log(`[tracker] - ${name} left`);
-      }
-    }
-
+    currentWipe = await getCurrentWipe(info.mapName);
   } else {
-    // ── Anonymous players ──────────────────────────────────────────────────
-    const { continuing, left, joined } = matchAnonymous(snapshot, players, elapsedSecs);
-
-    for (const { pi, ni } of continuing) {
-      const p = players[ni];
-      if (!p) continue;
-      newSnapshot.push({ ...snapshot[pi], time: p.time });
-    }
-
-    for (const pi of left) {
-      await endSession(snapshot[pi].sessionId, now);
-      console.log(`[tracker] - ${snapshot[pi].label} left`);
-    }
-
-    for (const ni of joined) {
-      const p = players[ni];
-      if (!p) continue;
-      const label     = `Raider #${++anonSeq}`;
-      const sessionId = await startSession(currentWipe.id, label, now);
-      newSnapshot.push({ sessionId, label, time: p.time });
-      console.log(`[tracker] + ${label} joined (${Math.floor(p.time)}s connected)`);
+    // Check if BM reports a newer wipe date than our current wipe started
+    const wipeStart = await getWipeStart();
+    if (wipeStart && wipeStart > currentWipe.started_at) {
+      console.log(`[tracker] New wipe detected — started ${new Date(wipeStart).toISOString()}`);
+      for (const [, s] of snapshot) await endSession(s.sessionId, now);
+      snapshot = new Map();
+      currentWipe = await transitionWipe(currentWipe.id, info.mapName);
     }
   }
 
-  snapshot    = newSnapshot.filter(Boolean);
-  lastPollAt  = now;
+  // ── Diff active players ────────────────────────────────────────────────
 
-  console.log(`[tracker] ${new Date(now).toISOString()} — ${players.length}/${maxPlayers} on ${mapName}`);
+  // Players who left (in snapshot but not in activePlayers)
+  for (const [bmId, s] of snapshot) {
+    if (!activePlayers.has(bmId)) {
+      await endSession(s.sessionId, now);
+      console.log(`[tracker] - ${s.name} left`);
+      snapshot.delete(bmId);
+    }
+  }
+
+  // Players who joined (in activePlayers but not in snapshot)
+  for (const [bmId, p] of activePlayers) {
+    if (!snapshot.has(bmId)) {
+      // Use BM's join time so session is accurate even if we missed it
+      const sessionId = await startSession(currentWipe.id, p.name, p.joinedAt);
+      snapshot.set(bmId, { sessionId, name: p.name, joinedAt: p.joinedAt });
+      console.log(`[tracker] + ${p.name} joined`);
+    }
+  }
+
+  console.log(
+    `[tracker] ${new Date(now).toISOString()} — ${info.playerCount}/${info.maxPlayers} on ${info.mapName}`
+  );
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
 function startTracking() {
-  console.log(`[tracker] Starting — querying ${HOST}:${PORT} every 2 minutes`);
+  if (!BM_TOKEN) {
+    console.error('[tracker] BM_TOKEN not set — cannot start');
+    return;
+  }
+  console.log(`[tracker] Starting — polling BattleMetrics for server ${SERVER_ID} every 2 minutes`);
   poll();
   cron.schedule('*/2 * * * *', poll);
 }
@@ -174,7 +181,7 @@ function getStatus() {
   return {
     ...lastStatus,
     currentWipe,
-    activePlayers: snapshot.map(s => s.label),
+    activePlayers: [...snapshot.values()].map(s => s.name),
   };
 }
 
