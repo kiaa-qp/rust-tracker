@@ -32,27 +32,31 @@ function get(path) {
 }
 
 function post(railwayUrl, body) {
-  const data    = JSON.stringify(body);
-  const url     = new URL('/api/push', railwayUrl);
-  const isHttps = url.protocol === 'https:';
-  const lib     = isHttps ? require('https') : require('http');
+  const data = JSON.stringify(body);
+  const url  = new URL('/api/push', railwayUrl);
+  const lib  = url.protocol === 'https:' ? require('https') : require('http');
 
   return new Promise((resolve, reject) => {
     const req = lib.request({
       hostname: url.hostname,
-      path:     url.pathname,
+      port:     url.port || (url.protocol === 'https:' ? 443 : 80),
+      path:     '/api/push',
       method:   'POST',
       headers: {
-        'Content-Type':    'application/json',
-        'Content-Length':  Buffer.byteLength(data),
-        'x-push-secret':   PUSH_SECRET,
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(data),
+        'x-push-secret':  PUSH_SECRET,
       },
     }, res => {
       let d = '';
       res.on('data', c => d += c);
-      res.on('end', () => resolve(d));
+      res.on('end', () => {
+        console.log(`[poller] Railway responded: ${res.statusCode} ${d}`);
+        resolve(d);
+      });
     });
     req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Railway push timed out')); });
     req.write(data);
     req.end();
   });
