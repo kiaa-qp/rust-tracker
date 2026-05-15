@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const db = require('./db');
-const { getStatus } = require('./tracker');
+const { getStatus, ingestPoll } = require('./tracker');
 
 const router = Router();
 
@@ -43,6 +43,21 @@ router.get('/sessions', async (req, res) => {
 router.get('/history', async (req, res) => {
   try { res.json(await db.getRecentPolls()); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/push — receives poll data from local poller
+router.post('/push', async (req, res) => {
+  const secret = process.env.PUSH_SECRET;
+  if (secret && req.headers['x-push-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    await ingestPoll(req.body);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[push] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 async function resolveWipeId(queryParam) {
