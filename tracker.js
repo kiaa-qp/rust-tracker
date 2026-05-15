@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const a2s  = require('./a2s');
 const {
   getCurrentWipe, transitionWipe,
   startSession, endSession, recordPoll,
@@ -18,11 +19,12 @@ let lastStatus = {
 };
 
 async function queryServer() {
-  const gamedig = await import('gamedig');
-  const GameDig = gamedig.GameDig || gamedig.default?.GameDig || gamedig.default;
-  if (!GameDig) throw new Error('Could not load GameDig from gamedig package');
-  const query = GameDig.query ? GameDig.query.bind(GameDig) : GameDig;
-  return query({ type: 'rust', host: HOST, port: PORT, requestRules: false });
+  const result = await a2s.query(HOST, PORT);
+  return {
+    map:        result.map,
+    maxplayers: result.maxPlayers,
+    players:    result.players,
+  };
 }
 
 // ── Anonymous player matching ─────────────────────────────────────────────
